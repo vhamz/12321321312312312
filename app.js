@@ -1,400 +1,431 @@
-// Import Transformers.js
+// ==============================================
+// SMART INVENTORY AI - MAIN APPLICATION
+// ==============================================
+
 import { pipeline } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.6/dist/transformers.min.js";
 
-// Google Sheets URL (оставь как есть или замени на свой)
-const SHEETS_URL = 'https://script.google.com/macros/s/AKfycbxvKf4o9VoCGRckMc-QgVySjhnFuElxcxHLmlG3E5HncjForWw1xwA5HTdGnvuu9wI/exec';
+// Конфигурация
+const CONFIG = {
+    sheetsUrl: 'https://script.google.com/macros/s/AKfycbxvKf4o9VoCGRckMc-QgVySjhnFuElxcxHLmlG3E5HncjForWw1xwA5HTdGnvuu9wI/exec',
+    reviewsFile: 'reviews_test.tsv',
+    appVersion: '2.0.0'
+};
 
-// Product database
+// База данных продуктов
 const PRODUCTS = [
-    { id: 'PROD-A7', name: 'Wireless Headphones', stock: 234, supplier: 'Samsung Electronics' },
-    { id: 'PROD-B3', name: 'Smart Watch', stock: 87, supplier: 'Apple Inc' },
-    { id: 'PROD-C9', name: 'Bluetooth Speaker', stock: 456, supplier: 'Sony' },
-    { id: 'PROD-D2', name: 'Phone Case', stock: 1243, supplier: 'Spigen' },
-    { id: 'PROD-E5', name: 'USB-C Cable', stock: 3456, supplier: 'Anker' },
-    { id: 'PROD-F8', name: 'Power Bank', stock: 23, supplier: 'Xiaomi' },
-    { id: 'PROD-G1', name: 'Laptop Stand', stock: 78, supplier: 'Rain Design' },
-    { id: 'PROD-H4', name: 'Monitor', stock: 45, supplier: 'LG' }
+    { id: 'PROD-001', name: 'Wireless Headphones', stock: 234, supplier: 'Samsung' },
+    { id: 'PROD-002', name: 'Smart Watch', stock: 87, supplier: 'Apple' },
+    { id: 'PROD-003', name: 'Bluetooth Speaker', stock: 456, supplier: 'Sony' },
+    { id: 'PROD-004', name: 'Phone Case', stock: 1243, supplier: 'Spigen' },
+    { id: 'PROD-005', name: 'USB-C Cable', stock: 3456, supplier: 'Anker' },
+    { id: 'PROD-006', name: 'Power Bank', stock: 23, supplier: 'Xiaomi' },
+    { id: 'PROD-007', name: 'Laptop Stand', stock: 78, supplier: 'Rain Design' },
+    { id: 'PROD-008', name: '4K Monitor', stock: 45, supplier: 'LG' }
 ];
 
-let reviews = [];
-let model = null;
-let currentProduct = null;
+// Состояние приложения
+const state = {
+    reviews: [],
+    model: null,
+    currentProduct: null,
+    isInitialized: false
+};
 
-// Ждем загрузки DOM
-document.addEventListener('DOMContentLoaded', async () => {
-    console.log('DOM loaded, initializing...');
-    
-    // Инициализируем элементы после загрузки DOM
-    initializeElements();
-    
-    // Запускаем инициализацию
-    try {
-        await initModel();
-    } catch (e) {
-        console.error('Init failed:', e);
-        showError(e.message);
-    }
-});
+// DOM элементы
+const dom = {};
 
-// Функция для инициализации элементов
-function initializeElements() {
-    window.el = {
-        status: document.getElementById('statusMessage'),
-        error: document.getElementById('errorMessage'),
-        btn: document.getElementById('analyzeButton'),
-        review: document.getElementById('reviewText'),
-        result: document.getElementById('resultBox'),
-        icon: document.getElementById('resultIcon'),
-        label: document.getElementById('resultLabel'),
-        conf: document.getElementById('resultConfidence'),
-        meterFill: document.getElementById('meterFill'),
-        loading: document.getElementById('loadingSpinner'),
-        inventoryBox: document.getElementById('inventoryBox'),
-        inventoryTitle: document.getElementById('inventoryTitle'),
-        inventorySubtitle: document.getElementById('inventorySubtitle'),
-        inventoryTag: document.getElementById('inventoryTag'),
-        productId: document.getElementById('productId'),
-        currentStock: document.getElementById('currentStock'),
-        aiRecommendation: document.getElementById('aiRecommendation'),
-        suggestedOrder: document.getElementById('suggestedOrder'),
-        inventoryPrimaryBtn: document.getElementById('inventoryPrimaryBtn'),
-        inventorySecondaryBtn: document.getElementById('inventorySecondaryBtn'),
-        transactionId: document.getElementById('transactionId'),
-        inventoryTimestamp: document.getElementById('inventoryTimestamp'),
-        systemLog: document.getElementById('systemLog')
-    };
+// ==============================================
+// Инициализация DOM элементов
+// ==============================================
+function initDom() {
+    const ids = [
+        'statusMessage', 'statusLed', 'errorMessage', 'analyzeBtn',
+        'reviewText', 'resultBox', 'resultIcon', 'resultLabel',
+        'progressFill', 'resultConfidence', 'loadingSpinner',
+        'inventoryBox', 'inventoryIcon', 'inventoryTitle', 'inventorySubtitle',
+        'priorityBadge', 'productId', 'productName', 'currentStock',
+        'aiRecommendation', 'primaryActionBtn', 'secondaryActionBtn',
+        'transactionId', 'timestamp', 'systemLog',
+        'statStock', 'statAlerts', 'statDecisions', 'batchId'
+    ];
     
-    console.log('Elements initialized:', window.el);
+    ids.forEach(id => {
+        dom[id] = document.getElementById(id);
+    });
     
-    // Добавляем обработчик на кнопку
-    if (window.el.btn) {
-        window.el.btn.addEventListener('click', analyze);
-        console.log('Button handler added');
-    }
+    console.log('✅ DOM initialized');
 }
 
-// Helper functions
-function setStatus(text) {
-    if (window.el?.status) window.el.status.textContent = text;
+// ==============================================
+// Вспомогательные функции
+// ==============================================
+function setStatus(text, isReady = false) {
+    if (dom.statusMessage) dom.statusMessage.textContent = text;
+    if (dom.statusLed) {
+        dom.statusLed.className = isReady ? 'led active' : 'led';
+    }
 }
 
 function showError(text) {
-    if (window.el?.error) {
-        window.el.error.style.display = 'block';
-        const span = window.el.error.querySelector('span');
-        if (span) span.textContent = text;
+    if (dom.errorMessage) {
+        dom.errorMessage.style.display = 'block';
+        dom.errorMessage.querySelector('span').textContent = text;
     }
+    log(`❌ ERROR: ${text}`);
 }
 
 function hideError() {
-    if (window.el?.error) window.el.error.style.display = 'none';
+    if (dom.errorMessage) dom.errorMessage.style.display = 'none';
+}
+
+function log(message) {
+    console.log(`[${new Date().toLocaleTimeString()}] ${message}`);
+    if (dom.systemLog) {
+        dom.systemLog.innerHTML = `[${new Date().toLocaleTimeString()}] ${message}`;
+    }
 }
 
 function generateTransactionId() {
-    return 'TRX-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
-}
-
-function updateLog(message) {
-    if (window.el?.systemLog) {
-        window.el.systemLog.innerHTML = `[${new Date().toLocaleTimeString()}] ${message}`;
-    }
-    console.log('LOG:', message);
+    return 'TXN-' + Date.now().toString(36).toUpperCase() + 
+           '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
 }
 
 function getRandomProduct() {
     return PRODUCTS[Math.floor(Math.random() * PRODUCTS.length)];
 }
 
-async function loadReviews() {
-    try {
-        updateLog('Loading reviews from TSV file...');
-        
-        // Проверяем что файл существует
-        const res = await fetch('reviews_test.tsv', { 
-            cache: 'no-store',
-            headers: { 'Cache-Control': 'no-cache' }
-        });
-        
-        if (!res.ok) {
-            throw new Error(`Failed to load reviews file: ${res.status} ${res.statusText}`);
-        }
-        
-        const text = await res.text();
-        console.log('TSV content:', text.substring(0, 200));
-        
-        if (!text || text.trim().length === 0) {
-            throw new Error('Reviews file is empty');
-        }
-        
-        return new Promise((resolve, reject) => {
-            Papa.parse(text, {
-                header: true,
-                delimiter: '\t',
-                skipEmptyLines: true,
-                complete: (r) => {
-                    console.log('Parsed data:', r.data);
-                    
-                    const data = r.data
-                        .map(row => row.text)
-                        .filter(t => t && typeof t === 'string' && t.trim().length > 0);
-                    
-                    console.log(`Found ${data.length} reviews`);
-                    
-                    if (data.length === 0) {
-                        // Если не нашли с заголовком 'text', пробуем другой формат
-                        const alternativeData = r.data
-                            .map(row => row[Object.keys(row)[0]]) // берем первый ключ
-                            .filter(t => t && typeof t === 'string' && t.trim().length > 0);
-                        
-                        if (alternativeData.length > 0) {
-                            resolve(alternativeData);
-                        } else {
-                            reject(new Error('No valid reviews found in file'));
-                        }
-                    } else {
-                        resolve(data);
-                    }
-                },
-                error: (e) => {
-                    console.error('Papa parse error:', e);
-                    reject(e);
-                }
-            });
-        });
-    } catch (e) {
-        console.error('Error loading reviews:', e);
-        throw e;
-    }
+function updateStats() {
+    if (dom.statStock) dom.statStock.textContent = '15,842';
+    if (dom.statAlerts) dom.statAlerts.textContent = '23';
+    if (dom.statDecisions) dom.statDecisions.textContent = '1,337';
+    if (dom.batchId) dom.batchId.textContent = `BATCH #WH-${new Date().getFullYear()}`;
 }
 
-async function initModel() {
-    try {
-        setStatus('INITIALIZING AI CORE...');
-        updateLog('Loading neural network model...');
+// ==============================================
+// Загрузка отзывов из TSV
+// ==============================================
+async function loadReviews() {
+    return new Promise((resolve, reject) => {
+        log('📂 Loading reviews from TSV...');
         
-        // Сначала загружаем отзывы
-        setStatus('LOADING REVIEWS...');
-        reviews = await loadReviews();
-        setStatus(`Loaded ${reviews.length} reviews`);
-        updateLog(`Loaded ${reviews.length} reviews successfully`);
-        
-        // Потом модель
-        setStatus('LOADING AI MODEL...');
-        updateLog('Loading Transformers model...');
-        
-        model = await pipeline('text-classification', 'Xenova/distilbert-base-uncased-finetuned-sst-2-english', {
-            progress_callback: (progress) => {
-                console.log('Model loading progress:', progress);
+        Papa.parse(CONFIG.reviewsFile, {
+            download: true,
+            header: true,
+            delimiter: '\t',
+            skipEmptyLines: true,
+            complete: (results) => {
+                if (results.data && results.data.length > 0) {
+                    const reviews = results.data
+                        .map(row => row.text)
+                        .filter(text => text && text.trim().length > 0);
+                    
+                    if (reviews.length > 0) {
+                        log(`✅ Loaded ${reviews.length} reviews`);
+                        resolve(reviews);
+                    } else {
+                        reject(new Error('No valid reviews found'));
+                    }
+                } else {
+                    reject(new Error('Failed to parse TSV'));
+                }
+            },
+            error: (error) => {
+                reject(new Error(`Failed to load reviews: ${error}`));
             }
         });
+    });
+}
+
+// ==============================================
+// Инициализация AI модели
+// ==============================================
+async function initModel() {
+    try {
+        setStatus('🔄 Loading AI model...');
+        log('🤖 Initializing Transformers pipeline...');
         
-        setStatus('WAREHOUSE AI ONLINE');
-        updateLog('System ready. Awaiting analysis.');
+        state.model = await pipeline(
+            'text-classification',
+            'Xenova/distilbert-base-uncased-finetuned-sst-2-english',
+            { 
+                progress_callback: (progress) => {
+                    if (progress.status === 'progress') {
+                        setStatus(`Loading model... ${Math.round(progress.progress * 100)}%`);
+                    }
+                }
+            }
+        );
         
-        if (window.el?.btn) {
-            window.el.btn.disabled = false;
-            console.log('Button enabled');
-        }
-        
-    } catch (e) {
-        console.error('Init error:', e);
-        showError(e.message);
-        setStatus('ERROR: ' + e.message);
-        updateLog(`ERROR: ${e.message}`);
+        log('✅ AI model ready');
+        return true;
+    } catch (error) {
+        log(`❌ Model initialization failed: ${error.message}`);
+        throw error;
     }
 }
 
-function getRandom() {
-    if (!reviews || reviews.length === 0) {
-        throw new Error('No reviews available');
-    }
-    return reviews[Math.floor(Math.random() * reviews.length)];
-}
-
-async function classify(text) {
-    if (!model) throw new Error('Model not loaded');
-    const result = await model(text);
+// ==============================================
+// Анализ тональности
+// ==============================================
+async function analyzeSentiment(text) {
+    if (!state.model) throw new Error('Model not loaded');
+    
+    const result = await state.model(text);
     return result[0];
 }
 
-function mapSentiment(result) {
+function formatSentiment(result) {
     const { label, score } = result;
     
     if (label === 'POSITIVE' && score > 0.5) {
-        return { type: 'positive', text: 'POSITIVE', score, icon: '📈' };
+        return { 
+            type: 'positive', 
+            label: 'POSITIVE', 
+            score, 
+            icon: '📈',
+            color: '#4caf50'
+        };
     } else if (label === 'NEGATIVE' && score > 0.5) {
-        return { type: 'negative', text: 'NEGATIVE', score, icon: '📉' };
+        return { 
+            type: 'negative', 
+            label: 'NEGATIVE', 
+            score, 
+            icon: '📉',
+            color: '#f44336'
+        };
     } else {
-        return { type: 'neutral', text: 'NEUTRAL', score, icon: '📊' };
+        return { 
+            type: 'neutral', 
+            label: 'NEUTRAL', 
+            score, 
+            icon: '📊',
+            color: '#ff9800'
+        };
     }
 }
 
-function showResult(data) {
-    if (!window.el) return;
+// ==============================================
+// Бизнес-логика для инвентаря
+// ==============================================
+function makeInventoryDecision(sentiment, product) {
+    const { label, score } = sentiment;
     
-    if (window.el.result) window.el.result.style.display = 'block';
-    if (window.el.icon) window.el.icon.textContent = data.icon;
-    if (window.el.label) window.el.label.textContent = data.text;
-    if (window.el.meterFill) window.el.meterFill.style.width = `${data.score * 100}%`;
-    if (window.el.conf) window.el.conf.textContent = `CONFIDENCE: ${(data.score * 100).toFixed(1)}%`;
-}
-
-function makeInventoryDecision(confidence, label, product) {
-    let normalizedScore = 0.5;
+    // Нормализуем score от 0 до 1, где 1 = лучший результат
+    let normalizedScore = label === 'POSITIVE' ? score : 1 - score;
     
-    if (label === "POSITIVE") {
-        normalizedScore = confidence;
-    } else if (label === "NEGATIVE") {
-        normalizedScore = 1.0 - confidence;
-    }
-    
-    if (normalizedScore <= 0.4) {
+    if (normalizedScore <= 0.3) {
+        // Критический случай -质量问题
         return {
             priority: 'high',
-            title: '⚠️ QUALITY CONTROL ALERT',
+            title: '⚠️ QUALITY ALERT',
             subtitle: `${product.name} - Quality issue detected`,
-            tag: 'PRIORITY 1',
+            badge: 'CRITICAL',
             recommendation: 'FLAG FOR QUALITY INSPECTION',
-            orderText: 'HOLD ALL SHIPMENTS',
-            actionBtn: {
-                text: '🔍 INSPECT BATCH',
-                icon: 'fa-search',
-                action: () => { alert(`🔍 Quality control notified for ${product.name}`); }
-            },
-            actionCode: 'FLAG_QUALITY_ISSUE',
-            priorityLevel: 'CRITICAL'
+            action: 'INSPECT BATCH',
+            actionIcon: 'fa-search',
+            actionCode: 'QUALITY_CHECK',
+            message: `Immediate quality check required for ${product.name}`,
+            btnText: '🔍 Inspect Now'
         };
-    } else if (normalizedScore < 0.7) {
-        const orderQty = Math.floor(Math.random() * 200) + 100;
+    } else if (normalizedScore <= 0.6) {
+        // Средний случай - проверить запасы
         return {
             priority: 'medium',
-            title: '📋 INVENTORY CHECK REQUIRED',
+            title: '📋 INVENTORY CHECK',
             subtitle: `${product.name} - Monitor stock levels`,
-            tag: 'PRIORITY 2',
+            badge: 'MEDIUM',
             recommendation: 'CHECK WAREHOUSE STOCK',
-            orderText: `ORDER ${orderQty} UNITS (LOW STOCK)`,
-            actionBtn: {
-                text: '📦 CHECK INVENTORY',
-                icon: 'fa-clipboard-list',
-                action: () => { alert(`📊 Current stock: ${product.stock} units`); }
-            },
-            actionCode: 'CHECK_INVENTORY',
-            priorityLevel: 'MEDIUM'
+            action: 'VERIFY STOCK',
+            actionIcon: 'fa-clipboard-list',
+            actionCode: 'STOCK_CHECK',
+            message: `Review stock levels for ${product.name}`,
+            btnText: '📦 Check Stock'
         };
     } else {
-        const orderQty = Math.floor(Math.random() * 500) + 300;
+        // Хороший случай - пополнить запасы
         return {
             priority: 'low',
-            title: '⚡ REORDER RECOMMENDATION',
+            title: '⚡ REORDER RECOMMENDED',
             subtitle: `${product.name} - High demand detected`,
-            tag: 'PRIORITY 3',
+            badge: 'LOW',
             recommendation: 'INCREASE STOCK LEVELS',
-            orderText: `ORDER ${orderQty} UNITS (HOT ITEM)`,
-            actionBtn: {
-                text: '🚀 PLACE ORDER NOW',
-                icon: 'fa-rocket',
-                action: () => { alert(`✅ Order for ${orderQty} units from ${product.supplier}`); }
-            },
-            actionCode: 'REORDER_STOCK',
-            priorityLevel: 'LOW'
+            action: 'ORDER NOW',
+            actionIcon: 'fa-rocket',
+            actionCode: 'REORDER',
+            message: `Place reorder for ${product.name} from ${product.supplier}`,
+            btnText: '🚀 Place Order'
         };
     }
+}
+
+// ==============================================
+// Отображение результатов
+// ==============================================
+function showSentimentResult(sentiment) {
+    dom.resultBox.style.display = 'block';
+    dom.resultIcon.textContent = sentiment.icon;
+    dom.resultLabel.textContent = sentiment.label;
+    dom.resultLabel.style.color = sentiment.color;
+    dom.progressFill.style.width = `${sentiment.score * 100}%`;
+    dom.progressFill.style.background = sentiment.color;
+    dom.resultConfidence.textContent = `Confidence: ${(sentiment.score * 100).toFixed(1)}%`;
 }
 
 function showInventoryDecision(decision, product, transactionId) {
-    if (!window.el) return;
+    // Set priority class
+    dom.inventoryBox.className = `inventory-box priority-${decision.priority}`;
+    dom.inventoryBox.style.display = 'block';
     
-    if (window.el.inventoryBox) {
-        window.el.inventoryBox.className = 'inventory-box priority-' + decision.priority;
-        window.el.inventoryBox.style.display = 'block';
-    }
+    // Fill data
+    dom.inventoryTitle.textContent = decision.title;
+    dom.inventorySubtitle.textContent = decision.subtitle;
+    dom.priorityBadge.textContent = decision.badge;
+    dom.productId.textContent = product.id;
+    dom.productName.textContent = product.name;
+    dom.currentStock.textContent = `${product.stock.toLocaleString()} units`;
+    dom.aiRecommendation.textContent = decision.recommendation;
     
-    if (window.el.inventoryTitle) window.el.inventoryTitle.textContent = decision.title;
-    if (window.el.inventorySubtitle) window.el.inventorySubtitle.textContent = decision.subtitle;
-    if (window.el.inventoryTag) window.el.inventoryTag.textContent = decision.tag;
-    if (window.el.productId) window.el.productId.textContent = product.id;
-    if (window.el.currentStock) window.el.currentStock.textContent = product.stock.toLocaleString() + ' units';
-    if (window.el.aiRecommendation) window.el.aiRecommendation.textContent = decision.recommendation;
-    if (window.el.suggestedOrder) window.el.suggestedOrder.textContent = decision.orderText;
+    // Primary button
+    dom.primaryActionBtn.innerHTML = `<i class="fas ${decision.actionIcon}"></i> ${decision.btnText}`;
+    dom.primaryActionBtn.onclick = () => {
+        alert(`✅ ${decision.message}`);
+        log(`Action executed: ${decision.actionCode}`);
+    };
     
-    if (window.el.inventoryPrimaryBtn) {
-        window.el.inventoryPrimaryBtn.innerHTML = `<i class="fas ${decision.actionBtn.icon}"></i> ${decision.actionBtn.text}`;
-        window.el.inventoryPrimaryBtn.onclick = (e) => {
-            e.preventDefault();
-            decision.actionBtn.action();
-        };
-    }
+    // Secondary button
+    dom.secondaryActionBtn.onclick = () => {
+        alert('⏰ Reminder set for later');
+        log('Action postponed');
+    };
     
-    if (window.el.transactionId) window.el.transactionId.textContent = transactionId;
-    if (window.el.inventoryTimestamp) window.el.inventoryTimestamp.textContent = new Date().toLocaleString();
+    // Footer
+    dom.transactionId.textContent = transactionId;
+    dom.timestamp.textContent = new Date().toLocaleString();
 }
 
+// ==============================================
+// Отправка в Google Sheets
+// ==============================================
+async function logToSheets(review, sentiment, product, decision, transactionId) {
+    try {
+        const payload = {
+            timestamp: new Date().toISOString(),
+            product_id: product.id,
+            product_name: product.name,
+            review: review,
+            sentiment_label: sentiment.label,
+            sentiment_score: sentiment.score,
+            action_taken: decision.actionCode,
+            priority: decision.priority,
+            ticket_id: transactionId
+        };
+        
+        log('📤 Sending to Google Sheets...');
+        
+        await fetch(CONFIG.sheetsUrl, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        
+        log('✅ Data logged to sheets');
+    } catch (error) {
+        log(`⚠️ Sheets logging failed: ${error.message}`);
+    }
+}
+
+// ==============================================
+// Основная функция анализа
+// ==============================================
 async function analyze() {
-    console.log('Analyze button clicked');
-    
     try {
         hideError();
         
-        if (!reviews || reviews.length === 0) {
-            throw new Error('No reviews loaded. Please refresh.');
+        // Проверки
+        if (!state.isInitialized) {
+            throw new Error('System not initialized yet');
         }
         
-        if (!model) {
-            throw new Error('Model not loaded yet. Please wait.');
+        if (state.reviews.length === 0) {
+            throw new Error('No reviews available');
         }
         
-        if (window.el.btn) window.el.btn.disabled = true;
-        if (window.el.loading) window.el.loading.style.display = 'block';
-        if (window.el.result) window.el.result.style.display = 'none';
-        if (window.el.inventoryBox) window.el.inventoryBox.style.display = 'none';
+        // UI обновления
+        dom.analyzeBtn.disabled = true;
+        dom.loadingSpinner.style.display = 'block';
+        dom.resultBox.style.display = 'none';
+        dom.inventoryBox.style.display = 'none';
         
-        const review = getRandom();
-        currentProduct = getRandomProduct();
+        // Выбираем случайный отзыв и продукт
+        const review = state.reviews[Math.floor(Math.random() * state.reviews.length)];
+        state.currentProduct = getRandomProduct();
         
-        console.log('Review:', review);
-        console.log('Product:', currentProduct);
+        dom.reviewText.textContent = review;
+        log(`📝 Analyzing: "${review.substring(0, 50)}..."`);
         
-        if (window.el.review) window.el.review.textContent = review;
+        // Анализируем тональность
+        const aiResult = await analyzeSentiment(review);
+        const sentiment = formatSentiment(aiResult);
         
-        updateLog(`Analyzing review for ${currentProduct.name}...`);
+        showSentimentResult(sentiment);
+        log(`🤖 Sentiment: ${sentiment.label} (${(sentiment.score * 100).toFixed(1)}%)`);
         
-        const result = await classify(review);
-        console.log('AI result:', result);
-        
-        const sentiment = mapSentiment(result);
-        showResult(sentiment);
-        
+        // Принимаем решение по инвентарю
+        const decision = makeInventoryDecision(aiResult, state.currentProduct);
         const transactionId = generateTransactionId();
-        const decision = makeInventoryDecision(result.score, result.label, currentProduct);
-        showInventoryDecision(decision, currentProduct, transactionId);
         
-        updateLog(`Analysis complete. Decision: ${decision.actionCode}`);
+        showInventoryDecision(decision, state.currentProduct, transactionId);
+        log(`📊 Decision: ${decision.actionCode}`);
         
-        // Опционально отправка в Sheets
-        try {
-            await fetch(SHEETS_URL, {
-                method: 'POST',
-                mode: 'no-cors',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    ts_iso: new Date().toISOString(),
-                    product_id: currentProduct.id,
-                    review: review,
-                    sentiment_label: sentiment.text,
-                    sentiment_confidence: sentiment.score,
-                    action_taken: decision.actionCode
-                })
-            });
-        } catch (e) {
-            console.log('Sheets logging skipped (optional)');
-        }
+        // Логируем в Google Sheets
+        await logToSheets(review, sentiment, state.currentProduct, decision, transactionId);
         
-    } catch (e) {
-        console.error('Analysis error:', e);
-        showError(e.message);
-        updateLog(`ERROR: ${e.message}`);
+    } catch (error) {
+        showError(error.message);
+        log(`❌ ${error.message}`);
     } finally {
-        if (window.el.btn) window.el.btn.disabled = false;
-        if (window.el.loading) window.el.loading.style.display = 'none';
+        dom.analyzeBtn.disabled = false;
+        dom.loadingSpinner.style.display = 'none';
     }
 }
+
+// ==============================================
+// Инициализация приложения
+// ==============================================
+async function init() {
+    try {
+        log('🚀 Starting Inventory AI System');
+        initDom();
+        updateStats();
+        
+        setStatus('📂 Loading reviews...');
+        state.reviews = await loadReviews();
+        
+        setStatus('🤖 Loading AI model...');
+        await initModel();
+        
+        setStatus('✅ System ready', true);
+        state.isInitialized = true;
+        
+        log('🎉 System initialized successfully');
+        
+    } catch (error) {
+        showError(`Init failed: ${error.message}`);
+        setStatus('❌ Init failed');
+        log(`💥 Fatal: ${error.message}`);
+    }
+}
+
+// ==============================================
+// Event Listeners
+// ==============================================
+document.addEventListener('DOMContentLoaded', () => {
+    init();
+    
+    // Обработчик кнопки
+    const analyzeBtn = document.getElementById('analyzeBtn');
+    if (analyzeBtn) {
+        analyzeBtn.addEventListener('click', analyze);
+    }
+});
