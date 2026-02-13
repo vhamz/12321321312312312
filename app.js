@@ -1,7 +1,7 @@
 // Import Transformers.js
 import { pipeline } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.6/dist/transformers.min.js";
 
-// Google Sheets URL (ЗАМЕНИ НА СВОЙ ПОСЛЕ ДЕПЛОЯ)
+// Google Sheets URL (оставь как есть или замени на свой)
 const SHEETS_URL = 'https://script.google.com/macros/s/AKfycbxvKf4o9VoCGRckMc-QgVySjhnFuElxcxHLmlG3E5HncjForWw1xwA5HTdGnvuu9wI/exec';
 
 // Product database
@@ -20,45 +20,74 @@ let reviews = [];
 let model = null;
 let currentProduct = null;
 
-const el = {
-    status: document.getElementById('statusMessage'),
-    error: document.getElementById('errorMessage'),
-    btn: document.getElementById('analyzeButton'),
-    review: document.getElementById('reviewText'),
-    result: document.getElementById('resultBox'),
-    icon: document.getElementById('resultIcon'),
-    label: document.getElementById('resultLabel'),
-    conf: document.getElementById('resultConfidence'),
-    meterFill: document.getElementById('meterFill'),
-    loading: document.getElementById('loadingSpinner'),
-    inventoryBox: document.getElementById('inventoryBox'),
-    inventoryTitle: document.getElementById('inventoryTitle'),
-    inventorySubtitle: document.getElementById('inventorySubtitle'),
-    inventoryTag: document.getElementById('inventoryTag'),
-    productId: document.getElementById('productId'),
-    currentStock: document.getElementById('currentStock'),
-    aiRecommendation: document.getElementById('aiRecommendation'),
-    suggestedOrder: document.getElementById('suggestedOrder'),
-    inventoryPrimaryBtn: document.getElementById('inventoryPrimaryBtn'),
-    inventorySecondaryBtn: document.getElementById('inventorySecondaryBtn'),
-    transactionId: document.getElementById('transactionId'),
-    inventoryTimestamp: document.getElementById('inventoryTimestamp'),
-    systemLog: document.getElementById('systemLog')
-};
+// Ждем загрузки DOM
+document.addEventListener('DOMContentLoaded', async () => {
+    console.log('DOM loaded, initializing...');
+    
+    // Инициализируем элементы после загрузки DOM
+    initializeElements();
+    
+    // Запускаем инициализацию
+    try {
+        await initModel();
+    } catch (e) {
+        console.error('Init failed:', e);
+        showError(e.message);
+    }
+});
 
+// Функция для инициализации элементов
+function initializeElements() {
+    window.el = {
+        status: document.getElementById('statusMessage'),
+        error: document.getElementById('errorMessage'),
+        btn: document.getElementById('analyzeButton'),
+        review: document.getElementById('reviewText'),
+        result: document.getElementById('resultBox'),
+        icon: document.getElementById('resultIcon'),
+        label: document.getElementById('resultLabel'),
+        conf: document.getElementById('resultConfidence'),
+        meterFill: document.getElementById('meterFill'),
+        loading: document.getElementById('loadingSpinner'),
+        inventoryBox: document.getElementById('inventoryBox'),
+        inventoryTitle: document.getElementById('inventoryTitle'),
+        inventorySubtitle: document.getElementById('inventorySubtitle'),
+        inventoryTag: document.getElementById('inventoryTag'),
+        productId: document.getElementById('productId'),
+        currentStock: document.getElementById('currentStock'),
+        aiRecommendation: document.getElementById('aiRecommendation'),
+        suggestedOrder: document.getElementById('suggestedOrder'),
+        inventoryPrimaryBtn: document.getElementById('inventoryPrimaryBtn'),
+        inventorySecondaryBtn: document.getElementById('inventorySecondaryBtn'),
+        transactionId: document.getElementById('transactionId'),
+        inventoryTimestamp: document.getElementById('inventoryTimestamp'),
+        systemLog: document.getElementById('systemLog')
+    };
+    
+    console.log('Elements initialized:', window.el);
+    
+    // Добавляем обработчик на кнопку
+    if (window.el.btn) {
+        window.el.btn.addEventListener('click', analyze);
+        console.log('Button handler added');
+    }
+}
+
+// Helper functions
 function setStatus(text) {
-    if (el.status) el.status.textContent = text;
+    if (window.el?.status) window.el.status.textContent = text;
 }
 
 function showError(text) {
-    if (el.error) {
-        el.error.style.display = 'block';
-        el.error.querySelector('span').textContent = text;
+    if (window.el?.error) {
+        window.el.error.style.display = 'block';
+        const span = window.el.error.querySelector('span');
+        if (span) span.textContent = text;
     }
 }
 
 function hideError() {
-    if (el.error) el.error.style.display = 'none';
+    if (window.el?.error) window.el.error.style.display = 'none';
 }
 
 function generateTransactionId() {
@@ -66,9 +95,10 @@ function generateTransactionId() {
 }
 
 function updateLog(message) {
-    if (el.systemLog) {
-        el.systemLog.innerHTML = `[${new Date().toLocaleTimeString()}] ${message}`;
+    if (window.el?.systemLog) {
+        window.el.systemLog.innerHTML = `[${new Date().toLocaleTimeString()}] ${message}`;
     }
+    console.log('LOG:', message);
 }
 
 function getRandomProduct() {
@@ -78,11 +108,23 @@ function getRandomProduct() {
 async function loadReviews() {
     try {
         updateLog('Loading reviews from TSV file...');
-        const res = await fetch('reviews_test.tsv');
-        if (!res.ok) throw new Error('Failed to load reviews file');
+        
+        // Проверяем что файл существует
+        const res = await fetch('reviews_test.tsv', { 
+            cache: 'no-store',
+            headers: { 'Cache-Control': 'no-cache' }
+        });
+        
+        if (!res.ok) {
+            throw new Error(`Failed to load reviews file: ${res.status} ${res.statusText}`);
+        }
         
         const text = await res.text();
-        console.log('TSV file loaded, length:', text.length);
+        console.log('TSV content:', text.substring(0, 200));
+        
+        if (!text || text.trim().length === 0) {
+            throw new Error('Reviews file is empty');
+        }
         
         return new Promise((resolve, reject) => {
             Papa.parse(text, {
@@ -91,14 +133,24 @@ async function loadReviews() {
                 skipEmptyLines: true,
                 complete: (r) => {
                     console.log('Parsed data:', r.data);
+                    
                     const data = r.data
                         .map(row => row.text)
-                        .filter(t => t && t.trim().length > 0);
+                        .filter(t => t && typeof t === 'string' && t.trim().length > 0);
                     
-                    console.log('Filtered reviews:', data.length);
+                    console.log(`Found ${data.length} reviews`);
                     
                     if (data.length === 0) {
-                        reject(new Error('No reviews found in file'));
+                        // Если не нашли с заголовком 'text', пробуем другой формат
+                        const alternativeData = r.data
+                            .map(row => row[Object.keys(row)[0]]) // берем первый ключ
+                            .filter(t => t && typeof t === 'string' && t.trim().length > 0);
+                        
+                        if (alternativeData.length > 0) {
+                            resolve(alternativeData);
+                        } else {
+                            reject(new Error('No valid reviews found in file'));
+                        }
                     } else {
                         resolve(data);
                     }
@@ -121,20 +173,34 @@ async function initModel() {
         updateLog('Loading neural network model...');
         
         // Сначала загружаем отзывы
+        setStatus('LOADING REVIEWS...');
         reviews = await loadReviews();
-        updateLog(`Loaded ${reviews.length} reviews`);
+        setStatus(`Loaded ${reviews.length} reviews`);
+        updateLog(`Loaded ${reviews.length} reviews successfully`);
         
         // Потом модель
-        model = await pipeline('text-classification', 'Xenova/distilbert-base-uncased-finetuned-sst-2-english');
+        setStatus('LOADING AI MODEL...');
+        updateLog('Loading Transformers model...');
+        
+        model = await pipeline('text-classification', 'Xenova/distilbert-base-uncased-finetuned-sst-2-english', {
+            progress_callback: (progress) => {
+                console.log('Model loading progress:', progress);
+            }
+        });
         
         setStatus('WAREHOUSE AI ONLINE');
         updateLog('System ready. Awaiting analysis.');
-        el.btn.disabled = false;
+        
+        if (window.el?.btn) {
+            window.el.btn.disabled = false;
+            console.log('Button enabled');
+        }
         
     } catch (e) {
         console.error('Init error:', e);
         showError(e.message);
         setStatus('ERROR: ' + e.message);
+        updateLog(`ERROR: ${e.message}`);
     }
 }
 
@@ -164,11 +230,13 @@ function mapSentiment(result) {
 }
 
 function showResult(data) {
-    if (el.result) el.result.style.display = 'block';
-    if (el.icon) el.icon.textContent = data.icon;
-    if (el.label) el.label.textContent = data.text;
-    if (el.meterFill) el.meterFill.style.width = `${data.score * 100}%`;
-    if (el.conf) el.conf.textContent = `CONFIDENCE: ${(data.score * 100).toFixed(1)}%`;
+    if (!window.el) return;
+    
+    if (window.el.result) window.el.result.style.display = 'block';
+    if (window.el.icon) window.el.icon.textContent = data.icon;
+    if (window.el.label) window.el.label.textContent = data.text;
+    if (window.el.meterFill) window.el.meterFill.style.width = `${data.score * 100}%`;
+    if (window.el.conf) window.el.conf.textContent = `CONFIDENCE: ${(data.score * 100).toFixed(1)}%`;
 }
 
 function makeInventoryDecision(confidence, label, product) {
@@ -180,29 +248,23 @@ function makeInventoryDecision(confidence, label, product) {
         normalizedScore = 1.0 - confidence;
     }
     
-    const transactionId = generateTransactionId();
-    const now = new Date();
-    
     if (normalizedScore <= 0.4) {
-        // QUALITY ISSUE - негативный отзыв
         return {
             priority: 'high',
             title: '⚠️ QUALITY CONTROL ALERT',
             subtitle: `${product.name} - Quality issue detected`,
             tag: 'PRIORITY 1',
             recommendation: 'FLAG FOR QUALITY INSPECTION',
-            orderQty: 0,
             orderText: 'HOLD ALL SHIPMENTS',
             actionBtn: {
                 text: '🔍 INSPECT BATCH',
                 icon: 'fa-search',
-                action: () => { alert(`🔍 Quality control team notified for ${product.name} batch #QC-${Date.now()}`); }
+                action: () => { alert(`🔍 Quality control notified for ${product.name}`); }
             },
             actionCode: 'FLAG_QUALITY_ISSUE',
             priorityLevel: 'CRITICAL'
         };
     } else if (normalizedScore < 0.7) {
-        // INVENTORY CHECK - нейтральный отзыв
         const orderQty = Math.floor(Math.random() * 200) + 100;
         return {
             priority: 'medium',
@@ -210,18 +272,16 @@ function makeInventoryDecision(confidence, label, product) {
             subtitle: `${product.name} - Monitor stock levels`,
             tag: 'PRIORITY 2',
             recommendation: 'CHECK WAREHOUSE STOCK',
-            orderQty: orderQty,
             orderText: `ORDER ${orderQty} UNITS (LOW STOCK)`,
             actionBtn: {
                 text: '📦 CHECK INVENTORY',
                 icon: 'fa-clipboard-list',
-                action: () => { alert(`📊 Current stock: ${product.stock} units. Suggested reorder: ${orderQty} units`); }
+                action: () => { alert(`📊 Current stock: ${product.stock} units`); }
             },
             actionCode: 'CHECK_INVENTORY',
             priorityLevel: 'MEDIUM'
         };
     } else {
-        // REORDER - позитивный отзыв
         const orderQty = Math.floor(Math.random() * 500) + 300;
         return {
             priority: 'low',
@@ -229,12 +289,11 @@ function makeInventoryDecision(confidence, label, product) {
             subtitle: `${product.name} - High demand detected`,
             tag: 'PRIORITY 3',
             recommendation: 'INCREASE STOCK LEVELS',
-            orderQty: orderQty,
             orderText: `ORDER ${orderQty} UNITS (HOT ITEM)`,
             actionBtn: {
                 text: '🚀 PLACE ORDER NOW',
                 icon: 'fa-rocket',
-                action: () => { alert(`✅ Purchase order created for ${orderQty} units of ${product.name} from ${product.supplier}`); }
+                action: () => { alert(`✅ Order for ${orderQty} units from ${product.supplier}`); }
             },
             actionCode: 'REORDER_STOCK',
             priorityLevel: 'LOW'
@@ -243,90 +302,36 @@ function makeInventoryDecision(confidence, label, product) {
 }
 
 function showInventoryDecision(decision, product, transactionId) {
-    if (!el.inventoryBox) return;
+    if (!window.el) return;
     
-    // Set priority class
-    el.inventoryBox.className = 'inventory-box priority-' + decision.priority;
-    el.inventoryBox.style.display = 'block';
+    if (window.el.inventoryBox) {
+        window.el.inventoryBox.className = 'inventory-box priority-' + decision.priority;
+        window.el.inventoryBox.style.display = 'block';
+    }
     
-    // Fill data
-    if (el.inventoryTitle) el.inventoryTitle.textContent = decision.title;
-    if (el.inventorySubtitle) el.inventorySubtitle.textContent = decision.subtitle;
-    if (el.inventoryTag) el.inventoryTag.textContent = decision.tag;
+    if (window.el.inventoryTitle) window.el.inventoryTitle.textContent = decision.title;
+    if (window.el.inventorySubtitle) window.el.inventorySubtitle.textContent = decision.subtitle;
+    if (window.el.inventoryTag) window.el.inventoryTag.textContent = decision.tag;
+    if (window.el.productId) window.el.productId.textContent = product.id;
+    if (window.el.currentStock) window.el.currentStock.textContent = product.stock.toLocaleString() + ' units';
+    if (window.el.aiRecommendation) window.el.aiRecommendation.textContent = decision.recommendation;
+    if (window.el.suggestedOrder) window.el.suggestedOrder.textContent = decision.orderText;
     
-    // Product details
-    if (el.productId) el.productId.textContent = product.id;
-    if (el.currentStock) el.currentStock.textContent = product.stock.toLocaleString() + ' units';
-    if (el.aiRecommendation) el.aiRecommendation.textContent = decision.recommendation;
-    if (el.suggestedOrder) el.suggestedOrder.textContent = decision.orderText;
-    
-    // Primary button
-    if (el.inventoryPrimaryBtn) {
-        const actionBtn = el.inventoryPrimaryBtn;
-        actionBtn.innerHTML = `<i class="fas ${decision.actionBtn.icon}"></i> ${decision.actionBtn.text}`;
-        
-        // Remove old listeners and add new one
-        const newBtn = actionBtn.cloneNode(true);
-        actionBtn.parentNode.replaceChild(newBtn, actionBtn);
-        el.inventoryPrimaryBtn = newBtn;
-        
-        el.inventoryPrimaryBtn.addEventListener('click', (e) => {
+    if (window.el.inventoryPrimaryBtn) {
+        window.el.inventoryPrimaryBtn.innerHTML = `<i class="fas ${decision.actionBtn.icon}"></i> ${decision.actionBtn.text}`;
+        window.el.inventoryPrimaryBtn.onclick = (e) => {
             e.preventDefault();
             decision.actionBtn.action();
-        });
-    }
-    
-    // Secondary button
-    if (el.inventorySecondaryBtn) {
-        const secondaryBtn = el.inventorySecondaryBtn;
-        const newSecondary = secondaryBtn.cloneNode(true);
-        secondaryBtn.parentNode.replaceChild(newSecondary, secondaryBtn);
-        el.inventorySecondaryBtn = newSecondary;
-        
-        el.inventorySecondaryBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            alert('⏰ Reminder set. Review saved for later.');
-        });
-    }
-    
-    // Footer
-    if (el.transactionId) el.transactionId.textContent = transactionId;
-    if (el.inventoryTimestamp) el.inventoryTimestamp.textContent = new Date().toLocaleString();
-}
-
-async function sendToSheets(review, sentiment, confidence, actionCode, priority, product, transactionId) {
-    try {
-        const payload = {
-            ts_iso: new Date().toISOString(),
-            product_id: product.id,
-            review: review,
-            sentiment_label: sentiment,
-            sentiment_confidence: confidence,
-            action_taken: actionCode,
-            inventory_action: actionCode,
-            priority_level: priority,
-            restock_quantity: actionCode === 'REORDER_STOCK' ? Math.floor(Math.random() * 500) + 300 : 0,
-            supplier_notified: actionCode === 'REORDER_STOCK' ? 'TRUE' : 'FALSE'
         };
-        
-        console.log('Sending to Sheets:', payload);
-        
-        await fetch(SHEETS_URL, {
-            method: 'POST',
-            mode: 'no-cors',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-        
-        updateLog(`Data logged to inventory system [${transactionId}]`);
-        
-    } catch (e) {
-        console.error('Sheets error:', e);
-        updateLog('Warning: Failed to log to Sheets');
     }
+    
+    if (window.el.transactionId) window.el.transactionId.textContent = transactionId;
+    if (window.el.inventoryTimestamp) window.el.inventoryTimestamp.textContent = new Date().toLocaleString();
 }
 
 async function analyze() {
+    console.log('Analyze button clicked');
+    
     try {
         hideError();
         
@@ -334,80 +339,62 @@ async function analyze() {
             throw new Error('No reviews loaded. Please refresh.');
         }
         
-        el.btn.disabled = true;
-        el.loading.style.display = 'block';
-        if (el.result) el.result.style.display = 'none';
-        if (el.inventoryBox) el.inventoryBox.style.display = 'none';
+        if (!model) {
+            throw new Error('Model not loaded yet. Please wait.');
+        }
         
-        // Get random review and product
+        if (window.el.btn) window.el.btn.disabled = true;
+        if (window.el.loading) window.el.loading.style.display = 'block';
+        if (window.el.result) window.el.result.style.display = 'none';
+        if (window.el.inventoryBox) window.el.inventoryBox.style.display = 'none';
+        
         const review = getRandom();
         currentProduct = getRandomProduct();
         
-        console.log('Selected review:', review);
-        console.log('Selected product:', currentProduct);
+        console.log('Review:', review);
+        console.log('Product:', currentProduct);
         
-        if (el.review) el.review.textContent = review;
+        if (window.el.review) window.el.review.textContent = review;
         
         updateLog(`Analyzing review for ${currentProduct.name}...`);
         
-        // Classify sentiment
         const result = await classify(review);
         console.log('AI result:', result);
         
         const sentiment = mapSentiment(result);
         showResult(sentiment);
         
-        // Make inventory decision
         const transactionId = generateTransactionId();
         const decision = makeInventoryDecision(result.score, result.label, currentProduct);
         showInventoryDecision(decision, currentProduct, transactionId);
         
-        // Send to sheets
-        await sendToSheets(
-            review,
-            sentiment.text,
-            sentiment.score,
-            decision.actionCode,
-            decision.priorityLevel,
-            currentProduct,
-            transactionId
-        );
-        
         updateLog(`Analysis complete. Decision: ${decision.actionCode}`);
+        
+        // Опционально отправка в Sheets
+        try {
+            await fetch(SHEETS_URL, {
+                method: 'POST',
+                mode: 'no-cors',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ts_iso: new Date().toISOString(),
+                    product_id: currentProduct.id,
+                    review: review,
+                    sentiment_label: sentiment.text,
+                    sentiment_confidence: sentiment.score,
+                    action_taken: decision.actionCode
+                })
+            });
+        } catch (e) {
+            console.log('Sheets logging skipped (optional)');
+        }
         
     } catch (e) {
         console.error('Analysis error:', e);
         showError(e.message);
         updateLog(`ERROR: ${e.message}`);
     } finally {
-        el.btn.disabled = false;
-        el.loading.style.display = 'none';
+        if (window.el.btn) window.el.btn.disabled = false;
+        if (window.el.loading) window.el.loading.style.display = 'none';
     }
 }
-
-// Initialize when page loads
-async function init() {
-    console.log('Initializing Inventory AI...');
-    
-    // Check if all elements exist
-    console.log('Elements found:', {
-        status: !!el.status,
-        btn: !!el.btn,
-        review: !!el.review
-    });
-    
-    try {
-        await initModel();
-    } catch (e) {
-        console.error('Init failed:', e);
-        showError(e.message);
-        setStatus('INIT FAILED: ' + e.message);
-    }
-}
-
-// Event listeners
-if (el.btn) {
-    el.btn.addEventListener('click', analyze);
-}
-
-document.addEventListener('DOMContentLoaded', init);
