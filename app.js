@@ -6,7 +6,7 @@ import { pipeline } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers
 
 // Конфигурация
 const CONFIG = {
-    sheetsUrl: 'https://script.google.com/macros/s/AKfycbxvKf4o9VoCGRckMc-QgVySjhnFuElxcxHLmlG3E5HncjForWw1xwA5HTdGnvuu9wI/exec',
+    sheetsUrl: 'https://script.google.com/macros/s/AKfycbxqAsUcM3xV6iN-7wlUWUuV6LNt9w9ibZ5s3oFmB0tVvZKM6u8aS3WH0Nd8K1lUDrw/exec',
     reviewsFile: 'reviews_test.tsv',
     appVersion: '2.0.0'
 };
